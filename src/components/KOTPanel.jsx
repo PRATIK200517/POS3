@@ -143,6 +143,7 @@ export default function KOTPanel({ kotItems, setKotItems }) {
 
     try {
       const customersRef = collection(db, "customers");
+      const empRef= collection(db,"Employees");
       const phoneQuery = query(
         customersRef,
         where("phone", "==", customerSearch)
@@ -161,7 +162,27 @@ export default function KOTPanel({ kotItems, setKotItems }) {
       phoneSnapshot.forEach(doc => results.push(doc.data()));
       idSnapshot.forEach(doc => results.push(doc.data()));
 
-      setFoundCustomers(results);
+      const newRes=[];
+      if(!results){
+        const empPhoneQuery = query(
+          empRef,
+          where("phone", "==", customerSearch)
+        );
+        const empIdQuery = query(
+          empRef,
+          where("EmployeeID", "==", customerSearch)
+        );
+        const [empPhoneSnapshot, empIdSnapshot] = await Promise.all([
+          getDocs(empPhoneQuery),
+          getDocs(empIdQuery)
+        ]);
+        empPhoneSnapshot.forEach(doc=>newRes.push(doc.data()));
+        empIdSnapshot.forEach(doc=>newRes.push(doc.data()));
+        setFoundCustomers(newRes);
+        return;
+      }else{
+        setFoundCustomers(results);
+      }
     } catch (error) {
       console.error("Error searching customer:", error);
       alert("Error searching customer");
