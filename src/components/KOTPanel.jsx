@@ -4,6 +4,7 @@ import { where } from "firebase/firestore";
 import {
   collection,
   getDocs,
+  getDoc,
   setDoc,
   doc,
   query,
@@ -32,7 +33,7 @@ export default function KOTPanel({ kotItems, setKotItems }) {
   const [customerPoints, setCustomerPoints] = useState(0);
   const [customerSearch, setCustomerSearch] = useState("");
   const [foundCustomers, setFoundCustomers] = useState([]);
-  const [showCancelConfirm,setShowCancelConfirm]=useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const userId = "1234"; // Replace with logged-in user ID
 
   useEffect(() => {
@@ -78,8 +79,6 @@ export default function KOTPanel({ kotItems, setKotItems }) {
     updateTotals(updated);
   };
 
-  
-  
   const clearItems = () => {
     setKotItems([]);
     updateTotals([]);
@@ -90,8 +89,6 @@ export default function KOTPanel({ kotItems, setKotItems }) {
     setCustomerPhone("");
     setCustomerName("");
   };
-  
-  
 
   const handlePayClick = () => {
     if (kotItems.length === 0) {
@@ -138,64 +135,116 @@ export default function KOTPanel({ kotItems, setKotItems }) {
     return `cus${String(number).padStart(2, "0")}`;
   };
 
+  const checkEmployeeClockInStatus = async (employeeId) => {
+    try {
+      const today = new Date();
+      const monthDocId = `${today.getFullYear()}-${String(
+        today.getMonth() + 1
+      ).padStart(2, "0")}`;
+      const dayKey = String(today.getDate()).padStart(2, "0");
+      const attendanceRef = doc(
+        db,
+        "Employees",
+        employeeId,
+        "attendance",
+        monthDocId
+      );
+      const attendanceSnap = await getDoc(attendanceRef);
+
+      return (
+        attendanceSnap.exists() &&
+        attendanceSnap.data().days?.[dayKey]?.isClockedIn === true
+      );
+    } catch (error) {
+      console.error("Error checking clock-in status:", error);
+      return false;
+    }
+  };
+
   const searchCustomer = async () => {
     if (!customerSearch) return;
 
     try {
       const customersRef = collection(db, "customers");
-      const empRef= collection(db,"Employees");
-      const phoneQuery = query(
-        customersRef,
-        where("phone", "==", customerSearch)
-      );
-      const idQuery = query(
-        customersRef,
-        where("customerID", "==", customerSearch)
-      );
+      const empRef = collection(db, "Employees");
 
-      const [phoneSnapshot, idSnapshot] = await Promise.all([
-        getDocs(phoneQuery),
-        getDocs(idQuery)
-      ]);
+      // Run all queries in parallel
+      const [customerPhoneSnap, customerIdSnap, empPhoneSnap, empIdSnap] =
+        await Promise.all([
+          getDocs(query(customersRef, where("phone", "==", customerSearch))),
+          getDocs(
+            query(customersRef, where("customerID", "==", customerSearch))
+          ),
+          getDocs(query(empRef, where("phone", "==", customerSearch))),
+          getDocs(query(empRef, where("EmployeeID", "==", customerSearch))),
+        ]);
 
       const results = [];
-      phoneSnapshot.forEach(doc => results.push(doc.data()));
-      idSnapshot.forEach(doc => results.push(doc.data()));
 
-      const newRes=[];
-      if(!results){
-        const empPhoneQuery = query(
-          empRef,
-          where("phone", "==", customerSearch)
-        );
-        const empIdQuery = query(
-          empRef,
-          where("EmployeeID", "==", customerSearch)
-        );
-        const [empPhoneSnapshot, empIdSnapshot] = await Promise.all([
-          getDocs(empPhoneQuery),
-          getDocs(empIdQuery)
-        ]);
-        empPhoneSnapshot.forEach(doc=>newRes.push(doc.data()));
-        empIdSnapshot.forEach(doc=>newRes.push(doc.data()));
-        setFoundCustomers(newRes);
-        return;
-      }else{
-        setFoundCustomers(results);
-      }
+      // Process customer results
+      customerPhoneSnap.forEach((doc) =>
+        results.push({ ...doc.data(), isEmployee: false })
+      );
+      customerIdSnap.forEach((doc) =>
+        results.push({ ...doc.data(), isEmployee: false })
+      );
+
+      // Process employee results
+      empPhoneSnap.forEach((doc) =>
+        results.push({
+          ...doc.data(),
+          isEmployee: true,
+          EmployeeID: doc.id, // Assuming EmployeeID is the document ID
+        })
+      );
+      empIdSnap.forEach((doc) =>
+        results.push({
+          ...doc.data(),
+          isEmployee: true,
+          EmployeeID: doc.id,
+        })
+      );
+
+      // Remove duplicates and check clock-in status
+      const uniqueResults = Array.from(
+        new Set(results.map((r) => r.phone || r.EmployeeID))
+      ).map((id) => results.find((r) => (r.phone || r.EmployeeID) === id));
+
+      const finalResults = await Promise.all(
+        uniqueResults.map(async (result) => {
+          if (result.isEmployee) {
+            const isClockedIn = await checkEmployeeClockInStatus(
+              result.EmployeeID
+            );
+            return { ...result, isClockedIn };
+          }
+          return result;
+        })
+      );
+
+      setFoundCustomers(finalResults);
     } catch (error) {
       console.error("Error searching customer:", error);
       alert("Error searching customer");
     }
   };
 
-  const handleSelectCustomer = (customer) => {
-    setCustomerId(customer.customerID);
+  const handleSelectCustomer = async (customer) => {
+    // Check if employee is clocked in
+    if (customer.isEmployee) {
+      const isClockedIn = await checkEmployeeClockInStatus(customer.EmployeeID);
+      if (isClockedIn) {
+        alert("Clocked-in employees cannot use loyalty program!");
+        return;
+      }
+    }
+
+    // Proceed with customer selection
+    setCustomerId(customer.customerID || customer.EmployeeID);
     setCustomerPhone(customer.phone);
     setCustomerName(customer.name);
     setCustomerPoints(customer.points || 0);
 
-    // Apply 10% discount if points >= 2
     if (customer.points >= 2) {
       const discountAmount = subTotal * 0.1;
       setDiscount(discountAmount);
@@ -220,7 +269,7 @@ export default function KOTPanel({ kotItems, setKotItems }) {
         phone: customerPhone,
         points: 0,
         createdAt: Timestamp.now(),
-        updatedAt: Timestamp.now()
+        updatedAt: Timestamp.now(),
       };
 
       await setDoc(doc(db, "customers", customerPhone), customerData);
@@ -260,7 +309,7 @@ export default function KOTPanel({ kotItems, setKotItems }) {
         id: item.id,
         name: item.name,
         quantity: item.quantity,
-        price: item.price
+        price: item.price,
       })),
     };
 
@@ -275,10 +324,14 @@ export default function KOTPanel({ kotItems, setKotItems }) {
           ? doc(db, "customers", customerPhone)
           : doc(db, "customers", customerId);
 
-        await setDoc(customerDoc, {
-          points: customerPoints + earnedPoints,
-          updatedAt: Timestamp.now()
-        }, { merge: true });
+        await setDoc(
+          customerDoc,
+          {
+            points: customerPoints + earnedPoints,
+            updatedAt: Timestamp.now(),
+          },
+          { merge: true }
+        );
 
         // Add to loyalty history
         await addDoc(collection(db, "loyaltyHistory"), {
@@ -286,7 +339,7 @@ export default function KOTPanel({ kotItems, setKotItems }) {
           type: "earn",
           points: earnedPoints,
           orderID: newKOTId,
-          date: Timestamp.now()
+          date: Timestamp.now(),
         });
       } catch (error) {
         console.error("Error updating customer points:", error);
@@ -298,7 +351,11 @@ export default function KOTPanel({ kotItems, setKotItems }) {
       <div style="font-family: Arial, sans-serif; border: 1px solid #000; padding: 10px; width: 200px;">
         <h3 style="text-align: center;">KOT</h3>
         <p><strong>KOT ID:</strong> ${newKOTId}</p>
-        ${customerId ? `<p><strong>Customer:</strong> ${customerName} (${customerId})</p>` : ''}
+        ${
+          customerId
+            ? `<p><strong>Customer:</strong> ${customerName} (${customerId})</p>`
+            : ""
+        }
         <table style="width: 100%; border-collapse: collapse;">
           <thead>
             <tr>
@@ -308,25 +365,44 @@ export default function KOTPanel({ kotItems, setKotItems }) {
             </tr>
           </thead>
           <tbody>
-            ${kotItems.map(
-              (item) => `
+            ${kotItems
+              .map(
+                (item) => `
                 <tr>
                   <td style="border: 1px solid #000; padding: 5px;">
                     ${item.name}
-                    ${item.sauces?.length > 0 ?
-                      `<div style="font-size: 10px; color: #555;">${item.sauces.join(", ")}</div>` : ''}
+                    ${
+                      item.sauces?.length > 0
+                        ? `<div style="font-size: 10px; color: #555;">${item.sauces.join(
+                            ", "
+                          )}</div>`
+                        : ""
+                    }
                   </td>
-                  <td style="border: 1px solid #000; padding: 5px;">${item.quantity}</td>
-                  <td style="border: 1px solid #000; padding: 5px;">£${item.quantity * item.price}</td>
+                  <td style="border: 1px solid #000; padding: 5px;">${
+                    item.quantity
+                  }</td>
+                  <td style="border: 1px solid #000; padding: 5px;">£${
+                    item.quantity * item.price
+                  }</td>
                 </tr>`
-            ).join("")}
+              )
+              .join("")}
           </tbody>
         </table>
         <p><strong>Sub Total:</strong> £${subTotal}</p>
         <p><strong>Discount:</strong> £${discount}</p>
         <p><strong>Total:</strong> £${total}</p>
-        ${customerPoints >= 2 ? `<p style="color: green;">10% discount applied (Points: ${customerPoints})</p>` : ''}
-        ${customerId ? `<p><strong>Earned Points:</strong> ${earnedPoints}</p>` : ''}
+        ${
+          customerPoints >= 2
+            ? `<p style="color: green;">10% discount applied (Points: ${customerPoints})</p>`
+            : ""
+        }
+        ${
+          customerId
+            ? `<p><strong>Earned Points:</strong> ${earnedPoints}</p>`
+            : ""
+        }
       </div>
     `;
 
@@ -455,15 +531,12 @@ export default function KOTPanel({ kotItems, setKotItems }) {
           TOTAL
         </button>
         <button
-  onClick={() => setShowCancelConfirm(true)}
-  className="bg-red-600 text-white p-2 rounded"
->
-  CANCEL
-</button>
+          onClick={() => setShowCancelConfirm(true)}
+          className="bg-red-600 text-white p-2 rounded"
+        >
+          CANCEL
+        </button>
 
-        
-        
-        
         <button
           onClick={handlePayClick}
           className="bg-blue-600 text-white p-2 rounded"
@@ -474,7 +547,9 @@ export default function KOTPanel({ kotItems, setKotItems }) {
           onClick={handleGenerateKOT}
           disabled={!isPaymentProcessed}
           className={`w-full text-white p-2 rounded ${
-            isPaymentProcessed ? "bg-green-800" : "bg-gray-500 cursor-not-allowed"
+            isPaymentProcessed
+              ? "bg-green-800"
+              : "bg-gray-500 cursor-not-allowed"
           }`}
         >
           SAVE KOT
@@ -550,30 +625,31 @@ export default function KOTPanel({ kotItems, setKotItems }) {
       )}
       {/*cancel order confirmation modal */}
       {showCancelConfirm && (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-    <div className="bg-white p-6 rounded shadow-lg text-center space-y-4">
-      <p className="text-lg font-semibold">Do you really want to cancel the order?</p>
-      <div className="flex justify-center gap-4">
-        <button
-          onClick={() => {
-            clearItems();
-            setShowCancelConfirm(false);
-          }}
-          className="bg-red-600 text-white px-4 py-2 rounded"
-        >
-          Yes
-        </button>
-        <button
-          onClick={() => setShowCancelConfirm(false)}
-          className="bg-gray-300 text-black px-4 py-2 rounded"
-        >
-          No
-        </button>
-      </div>
-    </div>
-  </div>
-)}
-
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded shadow-lg text-center space-y-4">
+            <p className="text-lg font-semibold">
+              Do you really want to cancel the order?
+            </p>
+            <div className="flex justify-center gap-4">
+              <button
+                onClick={() => {
+                  clearItems();
+                  setShowCancelConfirm(false);
+                }}
+                className="bg-red-600 text-white px-4 py-2 rounded"
+              >
+                Yes
+              </button>
+              <button
+                onClick={() => setShowCancelConfirm(false)}
+                className="bg-gray-300 text-black px-4 py-2 rounded"
+              >
+                No
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Customer Modal */}
       {isCustomerModalOpen && (
@@ -588,7 +664,9 @@ export default function KOTPanel({ kotItems, setKotItems }) {
             <h3 className="text-xl font-bold mb-4">Customer Loyalty Program</h3>
 
             <div className="mb-4">
-              <p className="mb-2">Enter Customer ID or Phone Number (Optional):</p>
+              <p className="mb-2">
+                Enter Customer ID or Phone Number (Optional):
+              </p>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -606,25 +684,36 @@ export default function KOTPanel({ kotItems, setKotItems }) {
               </div>
             </div>
 
-            {foundCustomers.length > 0 && (
-              <div className="mb-4 border-t pt-4">
-                <h4 className="font-semibold mb-2">Found Customers:</h4>
-                <div className="max-h-40 overflow-y-auto">
-                  {foundCustomers.map((customer) => (
-                    <div
-                      key={customer.customerID}
-                      className="p-2 border-b hover:bg-gray-100 cursor-pointer"
-                      onClick={() => handleSelectCustomer(customer)}
-                    >
-                      {customer.name} (Points: {customer.points || 0})
-                      {customer.points >= 2 && (
-                        <span className="text-green-600 ml-2">✓ Eligible for 10% discount</span>
-                      )}
+            {foundCustomers.map((customer) => {
+              const isEmployee = customer.isEmployee;
+              const identifier = isEmployee
+                ? customer.EmployeeID
+                : customer.customerID;
+              const type = isEmployee ? "Employee" : "Customer";
+
+              return (
+                <div
+                  key={identifier}
+                  className="p-2 border-b hover:bg-gray-100 cursor-pointer"
+                  onClick={() => handleSelectCustomer(customer)}
+                >
+                  <div className="font-medium">
+                    {customer.name} ({type})
+                  </div>
+                  {isEmployee && customer.isClockedIn && (
+                    <div className="text-red-600 text-sm">
+                      ⛔ Currently clocked in
                     </div>
-                  ))}
+                  )}
+                  {customer.points >= 2 &&
+                    !(isEmployee && customer.isClockedIn) && (
+                      <div className="text-green-600 text-sm">
+                        ✓ Eligible for 10% discount (Points: {customer.points})
+                      </div>
+                    )}
                 </div>
-              </div>
-            )}
+              );
+            })}
 
             <div className="flex gap-2 justify-center mt-4">
               <button
