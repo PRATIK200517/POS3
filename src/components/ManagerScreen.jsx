@@ -14,18 +14,20 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "../firebase/config";
+import { useNavigate } from "react-router-dom";
 
 export default function ManagerScreen() {
+  const navigate = useNavigate(); // Initialize navigate
   const [activeTab, setActiveTab] = useState("Orders");
   const [orders, setOrders] = useState([]);
   const [filterDate, setFilterDate] = useState("");
   const [selectedItemInfo, setSelectedItemInfo] = useState(null);
   const [employees, setEmployees] = useState([]);
-  const [amounts, setAmounts] = useState({});
   const [empId, setEmpId] = useState("");
   const [attendanceMessages, setAttendanceMessages] = useState([]);
   const [todayLogs, setTodayLogs] = useState([]);
   const [logsVisible, setLogsVisible] = useState(false);
+  const [selectedOrderInfo, setSelectedOrderInfo] = useState(null);
 
   // Daily reset check
   const checkDailyReset = async () => {
@@ -97,66 +99,44 @@ export default function ManagerScreen() {
     try {
       const snapshot = await getDocs(collection(db, "Employees"));
       const today = new Date();
-      const monthDocId = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+      const monthDocId = `${today.getFullYear()}-${String(
+        today.getMonth() + 1
+      ).padStart(2, "0")}`;
       const dayKey = String(today.getDate()).padStart(2, "0");
-  
+
       const employeePromises = snapshot.docs.map(async (empDoc) => {
-        const attendanceDocRef = doc(db, "Employees", empDoc.id, "attendance", monthDocId);
+        const attendanceDocRef = doc(
+          db,
+          "Employees",
+          empDoc.id,
+          "attendance",
+          monthDocId
+        );
         const attendanceSnap = await getDoc(attendanceDocRef);
-  
-        if (!attendanceSnap.exists()) return null;
-  
-        const attendanceData = attendanceSnap.data();
-        const todayAttendance = attendanceData?.days?.[dayKey];
-  
-        if (todayAttendance?.isClockedIn) {
-          const mealRef = doc(db, "Employees", empDoc.id, "meal", "1");
-          const mealSnap = await getDoc(mealRef);
-          const mealData = mealSnap.exists() ? mealSnap.data() : {};
-  
-          return {
-            id: empDoc.id,
-            ...empDoc.data(),
-            meal: mealData,
-          };
+
+        let isClockedIn = false;
+        if (attendanceSnap.exists()) {
+          const attendanceData = attendanceSnap.data();
+          const todayAttendance = attendanceData?.days?.[dayKey] || {};
+          isClockedIn = todayAttendance.isClockedIn || false;
         }
-  
-        return null;
+
+        const mealRef = doc(db, "Employees", empDoc.id, "meal", "1");
+        const mealSnap = await getDoc(mealRef);
+        const mealData = mealSnap.exists() ? mealSnap.data() : {};
+
+        return {
+          id: empDoc.id,
+          ...empDoc.data(),
+          meal: mealData,
+          isClockedIn: isClockedIn,
+        };
       });
-  
+
       const resolvedData = await Promise.all(employeePromises);
-      const filteredData = resolvedData.filter((emp) => emp !== null);
-      setEmployees(filteredData);
-  
+      setEmployees(resolvedData);
     } catch (err) {
       console.error("Error fetching employees:", err);
-    }
-  };
-  
-
-  const handleAddCredits = async (employee) => {
-    const amount = amounts[employee.id] || 0;
-    if (amount <= 0) return alert("Please enter a valid amount");
-
-    try {
-      const mealRef = doc(db, "Employees", employee.id, "meal", "1");
-      const currentCredits = employee.meal.mealCredits || 0;
-      const newCredits = currentCredits + Number(amount);
-
-      await updateDoc(mealRef, { mealCredits: newCredits });
-
-      // Update local state
-      setEmployees((prev) =>
-        prev.map((emp) =>
-          emp.id === employee.id
-            ? { ...emp, meal: { ...emp.meal, mealCredits: newCredits } }
-            : emp
-        )
-      );
-      setAmounts((prev) => ({ ...prev, [employee.id]: "" }));
-    } catch (err) {
-      console.error("Error adding credits:", err);
-      alert("Error updating credits");
     }
   };
 
@@ -363,6 +343,12 @@ export default function ManagerScreen() {
 
   return (
     <div className="flex min-h-screen">
+      <button
+        onClick={() => navigate("/")}
+        className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 text-2xl font-bold"
+      >
+        &times;
+      </button>
       <aside className="w-64 bg-gray-800 text-white p-6 space-y-4">
         <h2 className="text-2xl font-bold mb-6">Manager Panel</h2>
         <nav className="space-y-2">
@@ -420,33 +406,38 @@ export default function ManagerScreen() {
               <thead className="bg-gray-100">
                 <tr>
                   <th className="p-2 border">Date</th>
-                  <th className="p-2 border">Item Name</th>
-                  <th className="p-2 border">Price</th>
-                  <th className="p-2 border">Quantity</th>
+                  <th className="p-2 border">Order ID (KOT ID)</th>
                   <th className="p-2 border">Customer ID</th>
                   <th className="p-2 border">User ID</th>
+                  <th className="p-2 border">Total Items</th>
                   <th className="p-2 border">Total Amount</th>
+                  <th className="p-2 border">Actions</th>
                 </tr>
               </thead>
+
               <tbody>
-                {orders.map((order) =>
-                  order.items?.map((item, index) => {
-                    const isSelected =
-                      selectedItemInfo?.orderId === order.id &&
-                      selectedItemInfo?.item?.id === item.id;
+                {orders.length > 0 ? (
+                  orders.map((order) => {
+                    const orderId = order.id || order.kot_id; // handle id safely
+                    const totalItems = order.items?.reduce(
+                      (total, item) => total + (item.quantity || 0),
+                      0
+                    );
+
+                    const isSelected = selectedOrderInfo?.orderId === orderId;
+
                     return (
-                      <React.Fragment key={`${order.id}-${index}`}>
+                      <React.Fragment key={orderId}>
                         <tr
                           className={`text-center border-t cursor-pointer ${
                             isSelected ? "bg-gray-100" : ""
                           }`}
                           onClick={() =>
-                            setSelectedItemInfo(
+                            setSelectedOrderInfo(
                               isSelected
                                 ? null
                                 : {
-                                    orderId: order.id,
-                                    item,
+                                    orderId,
                                     order,
                                   }
                             )
@@ -455,43 +446,63 @@ export default function ManagerScreen() {
                           <td className="p-2 border">
                             {order.date?.toDate?.().toLocaleString() || "N/A"}
                           </td>
-                          <td className="p-2 border">{item.name}</td>
-                          <td className="p-2 border">{item.price}</td>
-                          <td className="p-2 border">{item.quantity}</td>
-                          <td className="p-2 border">{order.customerID}</td>
+                          <td className="p-2 border">
+                            {order.kot_id || order.id}
+                          </td>
+                          <td className="p-2 border">
+                            {order.customerID || "N/A"}
+                          </td>
                           <td className="p-2 border">
                             {order.user_id || "N/A"}
                           </td>
-                          <td className="p-2 border">{order.amount}</td>
+                          <td className="p-2 border">{totalItems || 0}</td>
+                          <td className="p-2 border">
+                            £{order.amount ? order.amount.toFixed(2) : "0.00"}
+                          </td>
+                          <td className="p-2 border">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation(); // prevent row click when clicking button
+                                handleVoid(orderId);
+                              }}
+                              className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded"
+                            >
+                              Void Order
+                            </button>
+                          </td>
                         </tr>
 
+                        {/* Expand to show order items */}
                         {isSelected && (
                           <tr className="bg-gray-50 text-center">
-                            <td colSpan={7} className="p-3">
-                              <button
-                                onClick={() =>
-                                  handleRefund(
-                                    order.id,
-                                    item.id,
-                                    item.price * item.quantity
-                                  )
-                                }
-                                className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded mr-4"
-                              >
-                                Refund This Item
-                              </button>
-                              <button
-                                onClick={() => handleVoid(order.id)}
-                                className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded"
-                              >
-                                Void Entire Order
-                              </button>
+                            <td colSpan={7} className="p-4 text-left">
+                              <h4 className="font-semibold mb-2">
+                                Order Items:
+                              </h4>
+                              {order.items && order.items.length > 0 ? (
+                                <ul className="list-disc list-inside">
+                                  {order.items.map((item, idx) => (
+                                    <li key={idx}>
+                                      {item.name} × {item.quantity} — £
+                                      {(item.price * item.quantity).toFixed(2)}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p>No items found for this order.</p>
+                              )}
                             </td>
                           </tr>
                         )}
                       </React.Fragment>
                     );
                   })
+                ) : (
+                  <tr>
+                    <td colSpan={7} className="p-4 text-center">
+                      No Orders Found
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -509,18 +520,32 @@ export default function ManagerScreen() {
                     <th className="p-2 text-left">ID</th>
                     <th className="p-2 text-left">Credits Left</th>
                     <th className="p-2 text-left">Status</th>
-                    <th className="p-2 text-left">Add Credits</th>
+                    <th className="p-2 text-left">Clock Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {employees.map((employee) => (
                     <tr
                       key={employee.id}
-                      className="border-b hover:bg-gray-100"
+                      className="border-b hover:bg-gray-100 cursor-pointer"
+                      onClick={() =>
+                        navigate("/", {
+                          state: {
+                            selectedEmployee: {
+                              id: employee.id,
+                              name: employee.name,
+                              EmployeeID: employee.EmployeeID,
+                              phone: employee.phone,
+                              mealCredits: employee.meal.mealCredits,
+                              isClockedIn: employee.isClockedIn,
+                            },
+                          },
+                        })
+                      }
                     >
                       <td className="p-2">{employee.name}</td>
                       <td className="p-2">{employee.EmployeeID}</td>
-                      <td className="p-2">{employee.meal.mealCredits}</td>
+                      <td className="p-2">{employee.meal.mealCredits || 0}</td>
                       <td className="p-2">
                         {employee.meal.mealCredits === 0 ? (
                           <span className="text-red-600 font-medium">
@@ -532,26 +557,12 @@ export default function ManagerScreen() {
                           </span>
                         )}
                       </td>
-                      <td className="p-2 flex gap-2 items-center">
-                        <input
-                          type="number"
-                          placeholder="Amount"
-                          className="border p-1 w-24 rounded"
-                          value={amounts[employee.id] || ""}
-                          onChange={(e) =>
-                            setAmounts((prev) => ({
-                              ...prev,
-                              [employee.id]: e.target.value,
-                            }))
-                          }
-                          min="0"
-                        />
-                        <button
-                          onClick={() => handleAddCredits(employee)}
-                          className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600"
-                        >
-                          Add
-                        </button>
+                      <td className="p-2">
+                        {employee.isClockedIn ? (
+                          <span className="text-green-600">Clocked In</span>
+                        ) : (
+                          <span className="text-red-600">Clocked Out</span>
+                        )}
                       </td>
                     </tr>
                   ))}

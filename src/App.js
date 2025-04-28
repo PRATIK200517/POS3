@@ -3,6 +3,7 @@ import { AuthProvider } from "./contexts/AutoContext";
 import Login from "./components/Login";
 import POS from "./components/POS";
 import ManagerScreen from "./components/ManagerScreen";
+import ManagerLogin from "./components/ManagerLogin"
 
 
 export default function App() {
@@ -11,8 +12,9 @@ export default function App() {
     <Router>
       <AuthProvider>
         <Routes>
-          <Route path="/" element={<Login />} /> 
-          <Route path="/pos" element={<POS />} />
+          <Route path="/employee-login" element={<Login />} /> 
+          <Route path="/" element={<POS />} />
+          <Route path="/manager-login" element={<ManagerLogin />} />
           <Route path="/manager" element={<ManagerScreen />} />
          
         </Routes>

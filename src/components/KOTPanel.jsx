@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { db } from "../firebase/config";
 import { where } from "firebase/firestore";
+import { useLocation } from "react-router-dom";
 import {
   collection,
   getDocs,
@@ -12,6 +13,7 @@ import {
   limit,
   Timestamp,
   addDoc,
+  updateDoc,
 } from "firebase/firestore";
 
 export default function KOTPanel({ kotItems, setKotItems }) {
@@ -34,11 +36,61 @@ export default function KOTPanel({ kotItems, setKotItems }) {
   const [customerSearch, setCustomerSearch] = useState("");
   const [foundCustomers, setFoundCustomers] = useState([]);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [employeeMealCredits, setEmployeeMealCredits] = useState(0);
+  const [creditsUsed, setCreditsUsed] = useState(0);
+  const [cashDue, setCashDue] = useState(0);
+  const [isEmployee, setIsEmployee] = useState(false);
+  const [orderId, setOrderId] = useState("");
+  const location = useLocation();
   const userId = "1234"; // Replace with logged-in user ID
+  // const [autoProcessEmployee, setAutoProcessEmployee] = useState(null);
+
+  // Add this useEffect hook
+
+  useEffect(() => {
+    if (isPaymentProcessed) {
+      handleGenerateKOT();
+    }
+  }, [isPaymentProcessed]);
+
+  useEffect(() => {
+    if (location.state?.selectedEmployee) {
+      const employee = location.state.selectedEmployee;
+      handleAutoProcessEmployee(employee);
+      // Clear the navigation state after processing
+      window.history.replaceState({}, document.title);
+    }
+  }, [location]);
+
+  useEffect(() => {
+    // Only show loyalty modal for non-employee orders
+    if (!isEmployee && !customerId) {
+      setIsCustomerModalOpen(false);
+    }
+  }, [isEmployee, customerId]);
+  
 
   useEffect(() => {
     updateTotals();
   }, [kotItems]);
+
+  const handleAutoProcessEmployee = async (employee) => {
+    if (!employee.isClockedIn) {
+      alert("Employee must be clocked in to use meal credits!");
+      return;
+    }
+  
+    // Set employee details and skip customer modal
+    setCustomerId(employee.EmployeeID);
+    setCustomerName(employee.name);
+    setCustomerPhone(employee.phone);
+    setEmployeeMealCredits(employee.mealCredits);
+    setIsEmployee(true);
+    setIsCustomerModalOpen(false); // Explicitly close customer modal
+    
+    // Open payment modal directly
+    // setIsPaymentModalOpen(true);s
+  };
 
   const updateTotals = (items = kotItems) => {
     const subtotal = items.reduce(
@@ -90,12 +142,18 @@ export default function KOTPanel({ kotItems, setKotItems }) {
     setCustomerName("");
   };
 
+  // Modify handlePayClick
   const handlePayClick = () => {
     if (kotItems.length === 0) {
       alert("Please add items before payment");
       return;
     }
-    setIsCustomerModalOpen(true);
+
+    if (isEmployee) {
+      setIsPaymentModalOpen(true);
+    } else {
+      setIsCustomerModalOpen(true);
+    }
   };
 
   const generateKOTId = async () => {
@@ -230,20 +288,39 @@ export default function KOTPanel({ kotItems, setKotItems }) {
   };
 
   const handleSelectCustomer = async (customer) => {
-    // Check if employee is clocked in
     if (customer.isEmployee) {
       const isClockedIn = await checkEmployeeClockInStatus(customer.EmployeeID);
       if (isClockedIn) {
         alert("Clocked-in employees cannot use loyalty program!");
         return;
       }
+
+      // Fetch employee's meal credits
+      try {
+        const mealRef = doc(db, "Employees", customer.EmployeeID, "meal", "1");
+        const mealSnap = await getDoc(mealRef);
+        const mealData = mealSnap.exists()
+          ? mealSnap.data()
+          : { mealCredits: 0 };
+
+        setEmployeeMealCredits(mealData.mealCredits || 0);
+        setIsEmployee(true);
+      } catch (error) {
+        console.error("Error fetching meal credits:", error);
+        alert("Error loading employee meal credits");
+        return;
+      }
+    } else {
+      setIsEmployee(false);
     }
 
-    // Proceed with customer selection
+    // Rest of the existing code...
     setCustomerId(customer.customerID || customer.EmployeeID);
     setCustomerPhone(customer.phone);
     setCustomerName(customer.name);
     setCustomerPoints(customer.points || 0);
+    setIsCustomerModalOpen(false);
+    setIsPaymentModalOpen(true);
 
     if (customer.points >= 2) {
       const discountAmount = subTotal * 0.1;
@@ -304,7 +381,9 @@ export default function KOTPanel({ kotItems, setKotItems }) {
       amount: total,
       user_id: userId,
       customerID: customerId || null,
-      earnedPoints: customerId ? earnedPoints : 0,
+      earnedPoints: isEmployee ? 0 : customerId ? earnedPoints : 0,
+      creditsUsed: isEmployee ? creditsUsed : 0,
+      cashPaid: isEmployee ? cashDue : total,
       items: kotItems.map((item) => ({
         id: item.id,
         name: item.name,
@@ -348,63 +427,75 @@ export default function KOTPanel({ kotItems, setKotItems }) {
 
     // Print KOT
     const printContent = `
-      <div style="font-family: Arial, sans-serif; border: 1px solid #000; padding: 10px; width: 200px;">
-        <h3 style="text-align: center;">KOT</h3>
-        <p><strong>KOT ID:</strong> ${newKOTId}</p>
-        ${
-          customerId
-            ? `<p><strong>Customer:</strong> ${customerName} (${customerId})</p>`
-            : ""
-        }
-        <table style="width: 100%; border-collapse: collapse;">
-          <thead>
-            <tr>
-              <th style="border: 1px solid #000; padding: 5px;">Item</th>
-              <th style="border: 1px solid #000; padding: 5px;">Qty</th>
-              <th style="border: 1px solid #000; padding: 5px;">Price</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${kotItems
-              .map(
-                (item) => `
-                <tr>
-                  <td style="border: 1px solid #000; padding: 5px;">
-                    ${item.name}
-                    ${
-                      item.sauces?.length > 0
-                        ? `<div style="font-size: 10px; color: #555;">${item.sauces.join(
-                            ", "
-                          )}</div>`
-                        : ""
-                    }
-                  </td>
-                  <td style="border: 1px solid #000; padding: 5px;">${
-                    item.quantity
-                  }</td>
-                  <td style="border: 1px solid #000; padding: 5px;">£${
-                    item.quantity * item.price
-                  }</td>
-                </tr>`
-              )
-              .join("")}
-          </tbody>
-        </table>
-        <p><strong>Sub Total:</strong> £${subTotal}</p>
-        <p><strong>Discount:</strong> £${discount}</p>
-        <p><strong>Total:</strong> £${total}</p>
-        ${
-          customerPoints >= 2
-            ? `<p style="color: green;">10% discount applied (Points: ${customerPoints})</p>`
-            : ""
-        }
-        ${
-          customerId
-            ? `<p><strong>Earned Points:</strong> ${earnedPoints}</p>`
-            : ""
-        }
-      </div>
-    `;
+    <div style="font-family: Arial, sans-serif; border: 1px solid #000; padding: 10px; width: 200px;">
+      <h3 style="text-align: center;">KOT</h3>
+      <p><strong>KOT ID:</strong> ${newKOTId}</p>
+      ${
+        customerId
+          ? `<p><strong>${
+              isEmployee ? "Employee" : "Customer"
+            }:</strong> ${customerName} (${customerId})</p>`
+          : ""
+      }
+      ${
+        isEmployee
+          ? `<p><strong>Meal Credits Used:</strong> £${creditsUsed}</p>
+             ${
+               cashDue > 0
+                 ? `<p><strong>Cash Paid:</strong> £${cashDue}</p>`
+                 : ""
+             }`
+          : ""
+      }
+      <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+          <tr>
+            <th style="border: 1px solid #000; padding: 5px;">Item</th>
+            <th style="border: 1px solid #000; padding: 5px;">Qty</th>
+            <th style="border: 1px solid #000; padding: 5px;">Price</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${kotItems
+            .map(
+              (item) => `
+              <tr>
+                <td style="border: 1px solid #000; padding: 5px;">
+                  ${item.name}
+                  ${
+                    item.sauces?.length > 0
+                      ? `<div style="font-size: 10px; color: #555;">${item.sauces.join(
+                          ", "
+                        )}</div>`
+                      : ""
+                  }
+                </td>
+                <td style="border: 1px solid #000; padding: 5px;">${
+                  item.quantity
+                }</td>
+                <td style="border: 1px solid #000; padding: 5px;">£${
+                  item.quantity * item.price
+                }</td>
+              </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+      <p><strong>Sub Total:</strong> £${subTotal}</p>
+      <p><strong>Discount:</strong> £${creditsUsed}</p>
+      <p><strong>Total:</strong> £${total-creditsUsed}</p>
+      ${
+        customerPoints >= 2 && !isEmployee
+          ? `<p style="color: green;">10% discount applied (Points: ${customerPoints})</p>`
+          : ""
+      }
+      ${
+        customerId && !isEmployee
+          ? `<p><strong>Earned Points:</strong> ${earnedPoints}</p>`
+          : ""
+      }
+    </div>
+  `;
 
     const printWindow = window.open("", "_blank");
     if (printWindow) {
@@ -418,13 +509,38 @@ export default function KOTPanel({ kotItems, setKotItems }) {
     clearItems();
   };
 
-  const handleProcessPayment = () => {
-    if (paymentMethod) {
-      setIsPaymentProcessed(true);
-      setIsPaymentModalOpen(false);
-    } else {
+  const handleProcessPayment = async () => {
+    // For employees, payment method is not required
+    if (!paymentMethod && !isEmployee) {
       alert("Please select a payment method.");
+      return;
     }
+
+    if (isEmployee) {
+      const creditsToUse = Math.min(employeeMealCredits, total);
+      const remainingCash = Math.max(total - creditsToUse, 0);
+
+      try {
+        const mealRef = doc(db, "Employees", customerId, "meal", "1");
+        await updateDoc(mealRef, {
+          mealCredits: employeeMealCredits - creditsToUse,
+        });
+
+        setCreditsUsed(creditsToUse);
+        setCashDue(remainingCash);
+
+        if (remainingCash > 0) {
+          alert(`Employee must pay £${remainingCash.toFixed(2)} in cash`);
+        }
+      } catch (error) {
+        console.error("Error updating meal credits:", error);
+        alert("Error processing meal credits");
+        return;
+      }
+    }
+
+    setIsPaymentProcessed(true);
+    setIsPaymentModalOpen(false);
   };
 
   return (
@@ -439,9 +555,20 @@ export default function KOTPanel({ kotItems, setKotItems }) {
 
       {customerId && (
         <div className="mb-4 text-base font-semibold text-green-700 border border-green-300 rounded p-2 bg-green-50">
-          Customer: {customerName} ({customerId}) - Points: {customerPoints}
-          {customerPoints >= 2 && (
-            <p className="text-green-600">10% discount applied</p>
+          {isEmployee ? (
+            <>
+              Employee: {customerName} ({customerId})
+              <p>Meal Credits: £{employeeMealCredits}</p>
+              {creditsUsed > 0 && <p>Credits Used: £{creditsUsed}</p>}
+              {cashDue > 0 && <p>Cash Due: £{cashDue}</p>}
+            </>
+          ) : (
+            <>
+              Customer: {customerName} ({customerId}) - Points: {customerPoints}
+              {customerPoints >= 2 && (
+                <p className="text-green-600">10% discount applied</p>
+              )}
+            </>
           )}
         </div>
       )}
@@ -525,12 +652,6 @@ export default function KOTPanel({ kotItems, setKotItems }) {
 
       <div className="grid grid-cols-2 gap-2 mb-4">
         <button
-          onClick={() => alert(`Total: £${total}`)}
-          className="bg-green-600 text-white p-2 rounded"
-        >
-          TOTAL
-        </button>
-        <button
           onClick={() => setShowCancelConfirm(true)}
           className="bg-red-600 text-white p-2 rounded"
         >
@@ -543,7 +664,7 @@ export default function KOTPanel({ kotItems, setKotItems }) {
         >
           PAY
         </button>
-        <button
+        {/* <button
           onClick={handleGenerateKOT}
           disabled={!isPaymentProcessed}
           className={`w-full text-white p-2 rounded ${
@@ -553,7 +674,7 @@ export default function KOTPanel({ kotItems, setKotItems }) {
           }`}
         >
           SAVE KOT
-        </button>
+        </button> */}
       </div>
 
       {/* Number Pad Modal */}
@@ -652,7 +773,7 @@ export default function KOTPanel({ kotItems, setKotItems }) {
       )}
 
       {/* Customer Modal */}
-      {isCustomerModalOpen && (
+      {isCustomerModalOpen && !isEmployee && (
         <div className="fixed inset-0 bg-black bg-opacity-30 flex justify-center items-center z-50">
           <div className="bg-white p-6 rounded shadow-lg w-[300px] text-center relative">
             <button
@@ -746,35 +867,52 @@ export default function KOTPanel({ kotItems, setKotItems }) {
             >
               ✕
             </button>
-            <h3 className="text-xl font-bold mb-4">Select Payment Method</h3>
-            <div className="flex justify-center gap-4 mb-4">
-              <button
-                className={`px-4 py-2 rounded ${
-                  paymentMethod === "cash"
-                    ? "bg-green-600 text-white"
-                    : "bg-gray-200"
-                }`}
-                onClick={() => setPaymentMethod("cash")}
-              >
-                Cash
-              </button>
-              <button
-                className={`px-4 py-2 rounded ${
-                  paymentMethod === "card"
-                    ? "bg-green-600 text-white"
-                    : "bg-gray-200"
-                }`}
-                onClick={() => setPaymentMethod("card")}
-              >
-                Card
-              </button>
-            </div>
-            <button
-              onClick={handleProcessPayment}
-              className="bg-blue-600 text-white px-6 py-2 rounded"
-            >
-              Process
-            </button>
+            <h3 className="text-xl font-bold mb-4">
+              {isEmployee ? "Employee Payment" : "Select Payment Method"}
+            </h3>
+            {isEmployee ? (
+              <div>
+                <p className="mb-4">Meal Credits: £{employeeMealCredits}</p>
+                <p className="mb-4">Total: £{total}</p>
+                <button
+                  onClick={handleProcessPayment}
+                  className="bg-blue-600 text-white px-6 py-2 rounded"
+                >
+                  Process with Meal Credits
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex justify-center gap-4 mb-4">
+                  <button
+                    className={`px-4 py-2 rounded ${
+                      paymentMethod === "cash"
+                        ? "bg-green-600 text-white"
+                        : "bg-gray-200"
+                    }`}
+                    onClick={() => setPaymentMethod("cash")}
+                  >
+                    Cash
+                  </button>
+                  <button
+                    className={`px-4 py-2 rounded ${
+                      paymentMethod === "card"
+                        ? "bg-green-600 text-white"
+                        : "bg-gray-200"
+                    }`}
+                    onClick={() => setPaymentMethod("card")}
+                  >
+                    Card
+                  </button>
+                </div>
+                <button
+                  onClick={handleProcessPayment}
+                  className="bg-blue-600 text-white px-6 py-2 rounded"
+                >
+                  Process
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

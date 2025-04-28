@@ -8,7 +8,7 @@ export default function Footer() {
         window.location.reload();
     }
     const handleManagerClick=()=>{
-        navigate("/manager");
+        navigate("/manager-login");
     }
 
   return (
