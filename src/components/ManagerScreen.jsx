@@ -20,13 +20,19 @@ export default function ManagerScreen() {
   const navigate = useNavigate(); // Initialize navigate
   const [activeTab, setActiveTab] = useState("Orders");
   const [orders, setOrders] = useState([]);
-  const [filterDate, setFilterDate] = useState("");
   const [selectedItemInfo, setSelectedItemInfo] = useState(null);
   const [employees, setEmployees] = useState([]);
   const [empId, setEmpId] = useState("");
   const [attendanceMessages, setAttendanceMessages] = useState([]);
   const [todayLogs, setTodayLogs] = useState([]);
   const [logsVisible, setLogsVisible] = useState(false);
+  const [filterDate, setFilterDate] = useState(() => {
+    const today = new Date();
+    return today.toISOString().split("T")[0];
+  });
+
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sortOrderAsc, setSortOrderAsc] = useState(true);
   const [selectedOrderInfo, setSelectedOrderInfo] = useState(null);
 
   // Daily reset check
@@ -341,6 +347,25 @@ export default function ManagerScreen() {
     }
   }, [activeTab, filterDate]);
 
+  const filteredOrders = orders.filter((order) => {
+    const query = searchTerm.toLowerCase();
+    const orderDate = order.date?.toDate?.().toISOString().split("T")[0];
+
+    return (
+      (!filterDate || orderDate === filterDate) &&
+      (!searchTerm ||
+        order.kot_id?.toString()?.toLowerCase().includes(query) ||
+        order.customerID?.toString()?.toLowerCase().includes(query) ||
+        order.amount?.toString()?.toLowerCase().includes(query))
+    );
+  });
+
+  const sortedOrders = [...filteredOrders].sort((a, b) => {
+    const idA = a.kot_id || a.id || "";
+    const idB = b.kot_id || b.id || "";
+    return sortOrderAsc ? idA.localeCompare(idB) : idB.localeCompare(idA);
+  });
+
   return (
     <div className="flex min-h-screen">
       <button
@@ -402,11 +427,36 @@ export default function ManagerScreen() {
               />
             </div>
 
+            <div className="mb-4">
+              <label className="block mb-2 font-medium">Search Orders:</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Order ID, Customer ID, Amount..."
+                  className="border p-2 rounded w-full"
+                />
+                <button
+                  onClick={() => {}}
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded"
+                >
+                  Search
+                </button>
+              </div>
+            </div>
+
             <table className="min-w-full border border-gray-200">
               <thead className="bg-gray-100">
                 <tr>
                   <th className="p-2 border">Date</th>
-                  <th className="p-2 border">Order ID (KOT ID)</th>
+                  <th
+                    className="p-2 border cursor-pointer select-none"
+                    onClick={() => setSortOrderAsc(!sortOrderAsc)}
+                  >
+                    Order ID (KOT ID)
+                    <span className="ml-1">{sortOrderAsc ? "↑" : "↓"}</span>
+                  </th>
                   <th className="p-2 border">Customer ID</th>
                   <th className="p-2 border">User ID</th>
                   <th className="p-2 border">Total Items</th>
@@ -416,9 +466,9 @@ export default function ManagerScreen() {
               </thead>
 
               <tbody>
-                {orders.length > 0 ? (
-                  orders.map((order) => {
-                    const orderId = order.id || order.kot_id; // handle id safely
+                {sortedOrders.length > 0 ? (
+                  sortedOrders.map((order) => {
+                    const orderId = order.id || order.kot_id;
                     const totalItems = order.items?.reduce(
                       (total, item) => total + (item.quantity || 0),
                       0
@@ -462,7 +512,7 @@ export default function ManagerScreen() {
                           <td className="p-2 border">
                             <button
                               onClick={(e) => {
-                                e.stopPropagation(); // prevent row click when clicking button
+                                e.stopPropagation();
                                 handleVoid(orderId);
                               }}
                               className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded"
@@ -472,7 +522,6 @@ export default function ManagerScreen() {
                           </td>
                         </tr>
 
-                        {/* Expand to show order items */}
                         {isSelected && (
                           <tr className="bg-gray-50 text-center">
                             <td colSpan={7} className="p-4 text-left">

@@ -68,7 +68,6 @@ export default function KOTPanel({ kotItems, setKotItems }) {
       setIsCustomerModalOpen(false);
     }
   }, [isEmployee, customerId]);
-  
 
   useEffect(() => {
     updateTotals();
@@ -79,7 +78,7 @@ export default function KOTPanel({ kotItems, setKotItems }) {
       alert("Employee must be clocked in to use meal credits!");
       return;
     }
-  
+
     // Set employee details and skip customer modal
     setCustomerId(employee.EmployeeID);
     setCustomerName(employee.name);
@@ -87,7 +86,7 @@ export default function KOTPanel({ kotItems, setKotItems }) {
     setEmployeeMealCredits(employee.mealCredits);
     setIsEmployee(true);
     setIsCustomerModalOpen(false); // Explicitly close customer modal
-    
+
     // Open payment modal directly
     // setIsPaymentModalOpen(true);s
   };
@@ -131,15 +130,22 @@ export default function KOTPanel({ kotItems, setKotItems }) {
     updateTotals(updated);
   };
 
+  // Update the clearItems function to reset employee-related states
   const clearItems = () => {
     setKotItems([]);
     updateTotals([]);
     setKotId("");
     setIsPaymentProcessed(false);
     setPaymentMethod("");
+    // Reset customer/employee states
     setCustomerId("");
     setCustomerPhone("");
     setCustomerName("");
+    // Reset employee-specific states
+    setEmployeeMealCredits(0);
+    setCreditsUsed(0);
+    setCashDue(0);
+    setIsEmployee(false);
   };
 
   // Modify handlePayClick
@@ -379,7 +385,6 @@ export default function KOTPanel({ kotItems, setKotItems }) {
       kot_id: newKOTId,
       date: Timestamp.now(),
       amount: total,
-      user_id: userId,
       customerID: customerId || null,
       earnedPoints: isEmployee ? 0 : customerId ? earnedPoints : 0,
       creditsUsed: isEmployee ? creditsUsed : 0,
@@ -483,7 +488,7 @@ export default function KOTPanel({ kotItems, setKotItems }) {
       </table>
       <p><strong>Sub Total:</strong> £${subTotal}</p>
       <p><strong>Discount:</strong> £${creditsUsed}</p>
-      <p><strong>Total:</strong> £${total-creditsUsed}</p>
+      <p><strong>Total:</strong> £${total - creditsUsed}</p>
       ${
         customerPoints >= 2 && !isEmployee
           ? `<p style="color: green;">10% discount applied (Points: ${customerPoints})</p>`
@@ -664,17 +669,6 @@ export default function KOTPanel({ kotItems, setKotItems }) {
         >
           PAY
         </button>
-        {/* <button
-          onClick={handleGenerateKOT}
-          disabled={!isPaymentProcessed}
-          className={`w-full text-white p-2 rounded ${
-            isPaymentProcessed
-              ? "bg-green-800"
-              : "bg-gray-500 cursor-not-allowed"
-          }`}
-        >
-          SAVE KOT
-        </button> */}
       </div>
 
       {/* Number Pad Modal */}
