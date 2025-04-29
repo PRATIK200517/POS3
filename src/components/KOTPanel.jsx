@@ -669,6 +669,11 @@ export default function KOTPanel({ kotItems, setKotItems }) {
         >
           PAY
         </button>
+        <button
+          className="bg-blue-600 text-white p-2 rounded"
+        >
+          STORE
+        </button>
       </div>
 
       {/* Number Pad Modal */}
